@@ -16,5 +16,5 @@ A graph neural network based on torch geometric for aqueous solubility predictio
 * Seaborn
 * tqdm <br/> 
 
-**Data Source**
+**Data Source** <br/>
 The well known AqSolDB: https://www.nature.com/articles/s41597-019-0151-1
