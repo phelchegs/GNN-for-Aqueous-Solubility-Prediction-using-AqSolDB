@@ -5,7 +5,8 @@ A graph neural network based on torch geometric for aqueous solubility predictio
 * Challenges:
   - multiclass classificaiton
   - message passing includes not only node features but also edge's
-  - use wandb for hyperparameters sweeping <br/> 
+  - use wandb for hyperparameters sweeping <br/>
+  
 **Dependencies**
 * PyTorch
 * PyTorch-Geometric
@@ -14,5 +15,6 @@ A graph neural network based on torch geometric for aqueous solubility predictio
 * Scikit-Learn
 * Seaborn
 * tqdm <br/> 
+
 **Data Source**
 https://www.nature.com/articles/s41597-019-0151-1
