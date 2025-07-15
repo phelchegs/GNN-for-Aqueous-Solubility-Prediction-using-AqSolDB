@@ -1,6 +1,4 @@
-from sklearn.metrics import roc_auc_score
-from sklearn.metrics import roc_curve, auc
-from sklearn.preprocessing import label_binarize
+from sklearn.metrics import mean_squared_error, r2_score
 import numpy as np
 from tqdm.notebook import tqdm #for jupyter notebook environment. If in script or command line environment, from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -18,113 +16,116 @@ class Trainer:
         self.model.train()
         self.model.to(self.device)
         ground_truths, predictions, losses = [], [], []
-        with tqdm(total = len(self.train_loader), desc = "Epoch {} for training".format(epoch), unit="batch") as data_iter:
+        with tqdm(total = len(self.train_loader), desc = "Epoch {} - training".format(epoch), unit="batch") as data_iter:
             for i, data in enumerate(self.train_loader):
                 data = data.to(self.device)    
                 self.optimizer.zero_grad()
                 output, loss = self.model(data, data.batch)
                 loss.backward()
                 self.optimizer.step()
-                y_true = data.y.cpu().detach().numpy()
-                y_true_binarized = label_binarize(y_true, classes=[0, 1, 2, 3])
-                y_pred = output.cpu().detach().numpy()
-                auc_micro = roc_auc_score(y_true_binarized, y_pred, average = 'micro')
-                data_iter.set_postfix(train_loss = round(loss.item(), 2), train_auc = round(auc_micro, 2), valid_loss = None, valid_auc = None)
-                data_iter.update(1)
-                ground_truths.extend(list(y_true_binarized))
-                predictions.extend(list(y_pred))
-                losses.append(loss.item())
-        epoch_loss = sum(losses)/len(losses)
-        epoch_auc_micro = roc_auc_score(np.array(ground_truths), np.array(predictions), average = 'micro')
-        return epoch_loss, epoch_auc_micro
 
-    def valid_one_epoch(self, epoch, loss, auc):
+                y_true = data.y.cpu().detach().numpy().flatten()
+                y_pred = output.cpu().detach().numpy().flatten()
+
+                ground_truths.extend(y_true)
+                predictions.extend(y_pred)
+                losses.append(loss.item())
+
+                if i%10 == 0 or i == len(self.train_loader) - 1:
+                    data_iter.set_postfix(train_loss = round(loss.item(), 4), train_rmse = round(mean_squared_error(ground_truths, predictions, squared=False), 4), train_r2 = round(r2_score(ground_truths, predictions), 4), valid_loss = None, valid_rmse = None, valid_r2 = None)
+                data_iter.update(1)
+                
+        epoch_loss = round(sum(losses)/len(losses), 4)
+        epoch_rmse, epoch_r2 = round(mean_squared_error(ground_truths, predictions, squared=False), 4), round(r2_score(ground_truths, predictions), 4)
+        print("Epoch {} - Training Loss {}, R2 {}, RMSE {}.".format(epoch, epoch_loss, epoch_r2, epoch_rmse))
+        return epoch_loss, epoch_rmse, epoch_r2
+
+    def valid_one_epoch(self, epoch, train_loss, train_rmse, train_r2):
         ground_truths, predictions, losses = [], [], []
         correct = 0
         total = 0
         self.model.to('cpu')
         self.model.eval()
-        with tqdm(total = len(self.test_loader), desc = "Epoch {} for testing".format(epoch), unit = 'batch') as data_iter:
-            data_iter.set_postfix(train_loss = round(loss, 2), train_auc = round(auc, 2), valid_loss = 'TBD', valid_auc = 'TBD', accuracy = 'TBD')
+        with tqdm(total = len(self.test_loader), desc = "Epoch {} - Validation".format(epoch), unit = 'batch') as data_iter:
+            data_iter.set_postfix(train_loss = round(train_loss, 2), train_rmse = round(train_rmse, 2), train_r2 = round(train_r2, 2), valid_loss = 'TBD', valid_rmse = 'TBD', valid_r2 = 'TBD')
             with torch.no_grad():
                 for data in self.test_loader:
                     output, vloss = self.model(data, data.batch)
-                    _, pred = torch.max(output, dim = 1)
-                    total += data.y.size(0)
-                    correct += (pred == data.y).sum().item()
-                    y_true = data.y.cpu().detach().numpy()
-                    y_true_binarized = label_binarize(y_true, classes=[0, 1, 2, 3])
-                    y_pred = output.cpu().detach().numpy()
-                    ground_truths.extend(list(y_true_binarized))
-                    predictions.extend(list(y_pred))
+
+                    y_true = data.y.cpu().detach().numpy().flatten()
+                    y_pred = output.cpu().detach().numpy().flatten()
+
+                    ground_truths.extend(y_true)
+                    predictions.extend(y_pred)
                     losses.append(vloss.item())
+                    
                     data_iter.update(1)
-            epoch_auc_micro = roc_auc_score(np.array(ground_truths), np.array(predictions), average = 'micro')
-            epoch_loss = sum(losses)/len(losses)
-            accuracy = round(100*correct/total, 2)
-            data_iter.set_postfix(train_loss = round(loss, 2), train_auc = round(auc, 2), valid_loss = round(epoch_loss, 2), valid_auc = round(epoch_auc_micro, 2), accuracy = accuracy)
-        return epoch_loss, epoch_auc_micro, accuracy
+
+            epoch_loss = np.mean(losses)
+            epoch_rmse = mean_squared_error(ground_truths, predictions, squared=False)
+            epoch_r2 = r2_score(ground_truths, predictions)
+
+            data_iter.set_postfix(train_loss=round(train_loss, 4), train_r2=round(train_r2, 4),
+                         valid_loss=round(epoch_loss, 4), valid_r2=round(epoch_r2, 4),
+                         valid_rmse=round(epoch_rmse, 4))
+        
+        print("Epoch {} - Validation Loss {}, R2 {}, RMSE {}.".format(epoch, epoch_loss, epoch_r2, epoch_rmse))
+
+        return epoch_loss, epoch_rmse, epoch_r2
 
     def train(self, epochs):
-        train_loss, train_auc, valid_loss, valid_auc, valid_acc = [], [], [], [], []
+        train_loss, train_rmse, train_r2 = [], [], []
+        valid_loss, valid_rmse, valid_r2 = [], [], []
         for epoch in range(epochs):
-            tloss, tauc = self.train_one_epoch(epoch)
+            tloss, trmse, tr2 = self.train_one_epoch(epoch)
+            train_rmse.append(trmse)
+            train_r2.append(tr2)
             train_loss.append(tloss)
-            train_auc.append(tauc)
-            vloss, vauc, vacc = self.valid_one_epoch(epoch, tloss, tauc)
+            vloss, vrmse, vr2 = self.valid_one_epoch(epoch, tloss, trmse, tr2)
             valid_loss.append(vloss)
-            valid_auc.append(vauc)
-            valid_acc.append(vacc)
-        return train_loss, train_auc, valid_loss, valid_auc, valid_acc
+            valid_rmse.append(vrmse)
+            valid_r2.append(vr2)
+        return train_loss, train_rmse, train_r2, valid_loss, valid_rmse, valid_r2
 
-    def predict(self, test_loader, n_classes):
+    def predict(self, test_loader):
         predictions = []
         ground_truths = []
-        fpr = dict()
-        tpr = dict()
-        roc_auc = dict()
-        correct = 0
-        total = 0
         self.model.to('cpu')
         self.model.eval()
-        data_iter = tqdm(test_loader, total = len(test_loader), desc = 'Predicting')
+        
         with torch.no_grad():
+            data_iter = tqdm(test_loader, total = len(test_loader), desc = 'Predicting')
             for data in data_iter:
                 output, _ = self.model(data, data.batch)
-                _, pred = torch.max(output, dim = 1)
-                total += data.y.size(0)
-                correct += (pred == data.y).sum().item()
-                y_true = data.y.cpu().detach().numpy()
-                y_true_binarized = label_binarize(y_true, classes=[0, 1, 2, 3])
-                y_pred = output.cpu().detach().numpy()
-                predictions.extend(list(y_pred))
-                ground_truths.extend(list(y_true_binarized))
+
+                y_true = data.y.cpu().detach().numpy().flatten()
+                y_pred = output.cpu().detach().numpy().flatten()
+
+                predictions.extend(y_pred)
+                ground_truths.extend(y_true)
         data_iter.set_postfix(stage="testing")
         data_iter.close()
 
-        for i in range(n_classes):
-            fpr[i], tpr[i], _ = roc_curve(np.array(ground_truths)[:, i], np.array(predictions)[:, i])
-            roc_auc[i] = auc(fpr[i], tpr[i])
-        fpr["micro"], tpr["micro"], _ = roc_curve(ground_truths.ravel(), predictions.ravel())
-        roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+        predictions = np.array(predictions)
+        ground_truths = np.array(ground_truths)
+
+        rmse = mean_squared_error(ground_truths, predictions, squared=False)
+        r2 = r2_score(ground_truths, predictions)
+
+        print(f"Test RMSE: {rmse:.4f}")
+        print(f"Test R²:   {r2:.4f}")
         
-        # Plot ROC curve for each class
         plt.figure()
-        plt.plot(fpr["micro"], tpr["micro"], color = 'deeppink', linestyle = ':', linewidth = 4, label = 'micro-average ROC curve (area = {0:0.2f})'.format(roc_auc["micro"]))
-
-        colors = ['aqua', 'darkorange', 'cornflowerblue', 'green']
-        for i, color in enumerate(colors):
-            plt.plot(fpr[i], tpr[i], color=color, lw=2, label='ROC curve of class {0} (area = {1:0.2f})'.format(i, roc_auc[i]))
-
-        plt.plot([0, 1], [0, 1], 'k--', lw=2)
-        plt.xlim([0.0, 1.0])
-        plt.ylim([0.0, 1.05])
-        plt.xlabel('False Positive Rate')
-        plt.ylabel('True Positive Rate')
-        plt.title('Receiver Operating Characteristic to Multi-class')
-        plt.legend(loc="lower right")
+        plt.scatter(ground_truths, predictions, alpha=0.5, c='blue', label='Predictions')
+        plt.plot([min(ground_truths), max(ground_truths)],
+                [min(ground_truths), max(ground_truths)],
+                'r--', label='Ideal (y = x)')
+        plt.xlabel('Actual logS')
+        plt.ylabel('Predicted logS')
+        plt.title('Prediction vs Actual (logS)')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
         plt.show()
-        accuracy = round(100*correct/total, 2)
-        print('Accuracy: {}%'.format(accuracy))
 
         return predictions, ground_truths
